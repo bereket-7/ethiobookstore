@@ -1,49 +1,22 @@
 <?php
-session_start();
-require_once "./functions/database_functions.php";
-$conn = db_connect();
 
-$query = "SELECT * FROM publisher ORDER BY publisherid";
-$result = mysqli_query($conn, $query);
-if (!$result) {
-	echo "Can't retrieve data " . mysqli_error($conn);
-	exit;
-}
-if (mysqli_num_rows($result) == 0) {
-	echo "Empty publisher ! Something wrong! check again";
-	exit;
-}
+declare(strict_types=1);
 
-$title = "List Of Publishers";
-require "./template/header.php";
+require_once __DIR__ . '/lib/bootstrap.php';
+
+$title = t('nav_publishers');
+$conn = db();
+$rows = getPublishersWithCounts($conn);
+require_once __DIR__ . '/template/header.php';
 ?>
-<p class="lead">Publisher list</p>
+<p class="lead"><?php echo e(t('nav_publishers')); ?></p>
 <ul>
-	<?php
-	while ($row = mysqli_fetch_assoc($result)) {
-		$count = 0;
-		$query = "SELECT publisherid FROM books";
-		$result2 = mysqli_query($conn, $query);
-		if (!$result2) {
-			echo "Can't retrieve data " . mysqli_error($conn);
-			exit;
-		}
-		while ($pubInBook = mysqli_fetch_assoc($result2)) {
-			if ($pubInBook['publisherid'] == $row['publisherid']) {
-				$count++;
-			}
-		}
-	?>
+	<?php foreach ($rows as $row): ?>
 		<li>
-			<span class="badge"><?php echo $count; ?></span>
-			<a href="bookPerPub.php?pubid=<?php echo $row['publisherid']; ?>"><?php echo $row['publisher_name']; ?></a>
+			<span class="badge"><?php echo (int) $row['book_count']; ?></span>
+			<a href="bookPerPub.php?pubid=<?php echo (int) $row['publisherid']; ?>"><?php echo e($row['publisher_name']); ?></a>
 		</li>
-	<?php } ?>
-	<li>
-		<a href="books.php">Full book catalogue </a>
-	</li>
+	<?php endforeach; ?>
+	<li><a href="books.php"><?php echo e(t('full_catalog')); ?></a></li>
 </ul>
-<?php
-mysqli_close($conn);
-require "./template/footer.php";
-?>
+<?php require_once __DIR__ . '/template/footer.php'; ?>
