@@ -1,3 +1,6 @@
-<!--if (!isset($_SESSION['name']) && $_SESSION['pass'] != true) {
-	header("Location: index.php");
-}-->
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/../lib/bootstrap.php';
+require_admin();
