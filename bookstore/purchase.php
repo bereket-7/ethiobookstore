@@ -1,120 +1,83 @@
 <?php
-	session_start();
-	$_SESSION['err'] = 1;
-	foreach($_POST as $key => $value){
-		if(trim($value) == ''){
-			$_SESSION['err'] = 0;
-		}
-		break;
-	}
 
-	if($_SESSION['err'] == 0){
-		header("Location: checkout.php");
-	} else {
-		unset($_SESSION['err']);
-	}
+declare(strict_types=1);
 
+require_once __DIR__ . '/lib/bootstrap.php';
 
-	$_SESSION['ship'] = array();
-	foreach($_POST as $key => $value){
-		if($key != "submit"){
-			$_SESSION['ship'][$key] = $value;
-		}
+if (!is_post()) {
+	redirect_local('checkout.php');
+}
+require_csrf();
+
+$required = ['name', 'email', 'address', 'city', 'zip_code', 'country'];
+$ship = [];
+foreach ($required as $field) {
+	$value = trim((string) ($_POST[$field] ?? ''));
+	if ($value === '') {
+		flash_set('error', 'All fields have to be filled');
+		redirect_local('checkout.php');
 	}
-	require_once "./functions/database_functions.php";
-	// print out header here
-	$title = "Purchase";
-	require "./template/header.php";
-	// connect database
-	if(isset($_SESSION['cart']) && (array_count_values($_SESSION['cart']))){
+	$ship[$field] = $value;
+}
+if (!filter_var($ship['email'], FILTER_VALIDATE_EMAIL)) {
+	flash_set('error', 'Invalid email address');
+	redirect_local('checkout.php');
+}
+
+$_SESSION['ship'] = $ship;
+$cart = $_SESSION['cart'] ?? [];
+if ($cart === []) {
+	flash_set('error', t('empty_cart'));
+	redirect_local('cart.php');
+}
+
+$conn = db();
+$_SESSION['total_price'] = total_price($cart);
+$_SESSION['total_items'] = total_items($cart);
+$fee = delivery_fee();
+$grand = (float) $_SESSION['total_price'] + $fee;
+
+$title = t('purchase');
+require_once __DIR__ . '/template/header.php';
 ?>
-	<table class="table">
+<table class="table">
+	<tr>
+		<th>Item</th>
+		<th><?php echo e(t('price')); ?></th>
+		<th>Quantity</th>
+		<th>Total</th>
+	</tr>
+	<?php foreach ($cart as $isbn => $qty):
+		$book = getBookByIsbn($conn, (string) $isbn);
+		if (!$book) {
+			continue;
+		}
+	?>
 		<tr>
-			<th>Item</th>
-			<th>Price</th>
-	    	<th>Quantity</th>
-	    	<th>Total</th>
-	    </tr>
-	    	<?php
-			    foreach($_SESSION['cart'] as $isbn => $qty){
-					$conn = db_connect();
-					$book = mysqli_fetch_assoc(getBookByIsbn($conn, $isbn));
-			?>
-		<tr>
-			<td><?php echo $book['book_title'] . "  በ  " . $book['book_author']; ?></td>
-			<td><?php echo "ብር" . $book['book_price']; ?></td>
-			<td><?php echo $qty; ?></td>
-			<td><?php echo "ብር" . $qty * $book['book_price']; ?></td>
+			<td><?php echo e($book['book_title'] . ' — ' . $book['book_author']); ?></td>
+			<td><?php echo e(money_etb((float) $book['book_price'])); ?></td>
+			<td><?php echo (int) $qty; ?></td>
+			<td><?php echo e(money_etb((float) $book['book_price'] * (int) $qty)); ?></td>
 		</tr>
-		<?php } ?>
-		<tr>
-			<th>&nbsp;</th>
-			<th>&nbsp;</th>
-			<th><?php echo $_SESSION['total_items']; ?></th>
-			<th><?php echo "ብር" . $_SESSION['total_price']; ?></th>
-		</tr>
-		<tr>
-			<td>Delivery</td>
-			<td>&nbsp;</td>
-			<td>&nbsp;</td>
-			<td>25.00</td>
-		</tr>
-		<tr>
-			<th>Total price Including delivery</th>
-			<th>&nbsp;</th>
-			<th>&nbsp;</th>
-			<th><?php echo "ብር" . ($_SESSION['total_price'] + 25); ?></th>
-		</tr>
-	</table>
-	<form method="post" action="process.php" class="form-horizontal">
-		<?php if(isset($_SESSION['err']) && $_SESSION['err'] == 1){ ?>
-		<p class="text-danger">All fields have to be filled</p>
-		<?php } ?>
-        <div class="form-group">
-            <label for="card_type" class="col-lg-2 control-label">Type</label>
-            <div class="col-lg-10">
-              	<select class="form-control" name="card_type">
-                  	<option value="VISA">CBE</option>
-                  	<option value="MasterCard">Amole</option>
-              	</select>
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="card_number" class="col-lg-2 control-label">Account number</label>
-            <div class="col-lg-10">
-              	<input type="text" class="form-control" name="card_number">
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="card_PID" class="col-lg-2 control-label">PID</label>
-            <div class="col-lg-10">
-              	<input type="text" class="form-control" name="card_PID">
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="card_expire" class="col-lg-2 control-label">Expiry Date</label>
-            <div class="col-lg-10">
-              	<input type="date" name="card_expire" class="form-control">
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="card_owner" class="col-lg-2 control-label">Name</label>
-            <div class="col-lg-10">
-              	<input type="text" class="form-control" name="card_owner">
-            </div>
-        </div>
-        <div class="form-group">
-            <div class="col-lg-10 col-lg-offset-2">
-              	<button type="reset" class="btn btn-default">Cancel</button>
-              	<button type="submit" class="btn btn-primary">Purchase</button>
-            </div>
-        </div>
-    </form>
-	<p class="lead">Please press Purchase to confirm your purchase, or Continue Shopping to add or remove items.</p>
-<?php
-	} else {
-		echo "<p class=\"text-warning\">Your cart is empty! Please make sure you add some books in it!</p>";
-	}
-	if(isset($conn)){ mysqli_close($conn); }
-	require_once "./template/footer.php";
-?>
+	<?php endforeach; ?>
+	<tr>
+		<td><?php echo e(t('delivery')); ?></td>
+		<td>&nbsp;</td>
+		<td>&nbsp;</td>
+		<td><?php echo e(money_etb($fee)); ?></td>
+	</tr>
+	<tr>
+		<th><?php echo e(t('total_with_delivery')); ?></th>
+		<th>&nbsp;</th>
+		<th>&nbsp;</th>
+		<th><?php echo e(money_etb($grand)); ?></th>
+	</tr>
+</table>
+
+<form method="post" action="process.php">
+	<?php echo csrf_field(); ?>
+	<p class="lead"><?php echo e(t('pay_chapa')); ?></p>
+	<button type="submit" class="btn btn-primary"><?php echo e(t('pay_chapa')); ?></button>
+	<a href="books.php" class="btn btn-default"><?php echo e(t('continue_shopping')); ?></a>
+</form>
+<?php require_once __DIR__ . '/template/footer.php'; ?>
