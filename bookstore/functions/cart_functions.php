@@ -1,35 +1,40 @@
 <?php
-	/*
-		loop through array of $_SESSION['cart'][book_isbn] => number
-		get isbn => take from database => take book price
-		price * number (quantity)
-		return sum of price
-	*/
-	function total_price($cart){
-		$price = 0.0;
-		if(is_array($cart)){
-		  	foreach($cart as $isbn => $qty){
-		  		$bookprice = getbookprice($isbn);
-		  		if($bookprice){
-		  			$price += $bookprice * $qty;
-		  		}
-		  	}
-		}
-		return $price;
-	}
 
-	/*
-		loop through array of $_SESSION['cart'][book_isbn] => number
-		$_SESSION['cart'] is associative array which is [book_isbn] => number of books for each book_isbn
-		calculate sum of books 
-	*/
-	function total_items($cart){
-		$items = 0;
-		if(is_array($cart)){
-			foreach($cart as $isbn => $qty){
-				$items += $qty;
-			}
+declare(strict_types=1);
+
+function total_price(array $cart): float
+{
+	$price = 0.0;
+	foreach ($cart as $isbn => $qty) {
+		$bookprice = getbookprice((string) $isbn);
+		$qty = (int) $qty;
+		if ($bookprice !== null && $qty > 0) {
+			$price += $bookprice * $qty;
 		}
-		return $items;
 	}
-?>
+	return $price;
+}
+
+function total_items(array $cart): int
+{
+	$items = 0;
+	foreach ($cart as $qty) {
+		$qty = (int) $qty;
+		if ($qty > 0) {
+			$items += $qty;
+		}
+	}
+	return $items;
+}
+
+function normalize_cart_quantities(array $input): array
+{
+	$cart = [];
+	foreach ($input as $isbn => $qty) {
+		$qty = (int) $qty;
+		if ($qty > 0) {
+			$cart[(string) $isbn] = $qty;
+		}
+	}
+	return $cart;
+}
