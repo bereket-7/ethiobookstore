@@ -1,41 +1,61 @@
 <?php
-session_start();
-if (!isset($_POST['submit'])) {
-	echo "Something wrong! Check again!";
-	exit;
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/lib/bootstrap.php';
+
+if (!is_post()) {
+	redirect_local('admin.php');
 }
-require_once "./functions/database_functions.php";
-$conn = db_connect();
+require_csrf();
 
-$name = trim($_POST['name']);
-$pass = trim($_POST['pass']);
-
-if ($name == "" || $pass == "") {
-	echo "Name or Pass is empty!";
-	exit;
-}
-
-$name = mysqli_real_escape_string($conn, $name);
-$pass = mysqli_real_escape_string($conn, $pass);
-$pass = sha1($pass);
-
-// get from db
-$query = "SELECT name, pass from admin";
-$result = mysqli_query($conn, $query);
-if (!$result) {
-	echo "Empty data " . mysqli_error($conn);
-	exit;
-}
-$row = mysqli_fetch_assoc($result);
-
-if ($name != $row['name'] && $pass != $row['pass']) {
-	//echo "Invalid username or password!";
-	//$_SESSION['admin'] = false;
-	header("Location: index.php");
+if (login_rate_limited('admin')) {
+	flash_set('error', 'Too many login attempts. Try again later.');
+	redirect_local('admin.php');
 }
 
-if (isset($conn)) {
-	mysqli_close($conn);
+$name = trim((string) ($_POST['name'] ?? ''));
+$pass = (string) ($_POST['pass'] ?? '');
+if ($name === '' || $pass === '') {
+	flash_set('error', 'Username and password required');
+	redirect_local('admin.php');
 }
-//$_SESSION['admin'] = true;
-header("Location: admin_book.php");
+
+$conn = db();
+$stmt = $conn->prepare('SELECT id, name, pass FROM admin WHERE name = ? LIMIT 1');
+$stmt->bind_param('s', $name);
+$stmt->execute();
+$row = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+$valid = false;
+if ($row) {
+	$hash = (string) $row['pass'];
+	if (str_starts_with($hash, '$2y$') || str_starts_with($hash, '$2a$') || str_starts_with($hash, '$argon2')) {
+		$valid = password_verify($pass, $hash);
+	} else {
+		// Legacy SHA-1 migration
+		$valid = hash_equals($hash, sha1($pass));
+		if ($valid) {
+			$newHash = password_hash($pass, PASSWORD_DEFAULT);
+			$upd = $conn->prepare('UPDATE admin SET pass = ? WHERE id = ?');
+			$id = (int) $row['id'];
+			$upd->bind_param('si', $newHash, $id);
+			$upd->execute();
+			$upd->close();
+		}
+	}
+}
+
+if (!$valid) {
+	login_rate_hit('admin');
+	flash_set('error', 'Invalid username or password');
+	redirect_local('admin.php');
+}
+
+login_rate_clear('admin');
+session_regenerate_id(true);
+$_SESSION['admin_id'] = (int) $row['id'];
+$_SESSION['admin_name'] = $row['name'];
+flash_set('success', 'Welcome admin');
+redirect_local('admin_dashboard.php');
