@@ -1,0 +1,5 @@
+.env
+bookstore/storage/logs/*.log
+vendor/
+.phpunit.result.cache
+.phpunit.cache/
