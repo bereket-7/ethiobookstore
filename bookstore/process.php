@@ -1,65 +1,84 @@
 <?php
-session_start();
 
-$_SESSION['err'] = 1;
-foreach ($_POST as $key => $value) {
-	if (trim($value) == '') {
-		$_SESSION['err'] = 0;
-	}
-	break;
+declare(strict_types=1);
+
+require_once __DIR__ . '/lib/bootstrap.php';
+
+if (!is_post()) {
+	redirect_local('checkout.php');
+}
+require_csrf();
+
+$ship = $_SESSION['ship'] ?? null;
+$cart = $_SESSION['cart'] ?? [];
+if (!$ship || $cart === []) {
+	flash_set('error', t('empty_cart'));
+	redirect_local('cart.php');
 }
 
-if ($_SESSION['err'] == 0) {
-	header("Location: purchase.php");
-} else {
-	unset($_SESSION['err']);
+$conn = db();
+$subtotal = total_price($cart);
+$fee = delivery_fee();
+$userId = current_user_id();
+$email = $ship['email'] ?? ($_SESSION['user_email'] ?? null);
+
+try {
+	$orderId = createOrderWithItems($conn, $cart, $subtotal, $fee, $ship, $userId, $email);
+} catch (Throwable $e) {
+	flash_set('error', 'Could not create order. Please try again.');
+	redirect_local('checkout.php');
 }
 
-require_once "./functions/database_functions.php";
-// print out header here
-$title = "Purchase Process";
-require "./template/header.php";
-// connect database
-$conn = db_connect();
-extract($_SESSION['ship']);
-
-// validate post section
-$card_number = $_POST['card_number'];
-$card_PID = $_POST['card_PID'];
-$card_expire = strtotime($_POST['card_expire']);
-$card_owner = $_POST['card_owner'];
-
-// find customer
-$customerid = getCustomerId($name, $address, $city, $zip_code, $country);
-if ($customerid == null) {
-	// insert customer into database and return customerid
-	$customerid = setCustomerId($name, $address, $city, $zip_code, $country);
+$order = getOrderById($conn, $orderId);
+if (!$order) {
+	flash_set('error', 'Order missing after create');
+	redirect_local('checkout.php');
 }
-$date = date("Y-m-d H:i:s");
-insertIntoOrder($conn, $customerid, $_SESSION['total_price'], $date, $name, $address, $city, $zip_code, $country);
 
-// take orderid from order to insert order items
-$orderid = getOrderId($conn, $customerid);
+$txRef = (string) $order['payment_tx_ref'];
+$amount = (float) $order['amount'];
+$chapa = ChapaClient::fromConfig();
 
-foreach ($_SESSION['cart'] as $isbn => $qty) {
-	$bookprice = getbookprice($isbn);
-	$query = "INSERT INTO order_items VALUES 
-		('$orderid', '$isbn', '$bookprice', '$qty')";
-	$result = mysqli_query($conn, $query);
-	if (!$result) {
-		echo "Insert value false!" . mysqli_error($conn2);
+// Clear cart after order is persisted
+unset($_SESSION['cart'], $_SESSION['total_items'], $_SESSION['total_price'], $_SESSION['ship']);
+
+if ($chapa->isConfigured()) {
+	$base = rtrim((string) config('app.url'), '/');
+	$callback = $base . '/payment_callback.php';
+	$returnUrl = $base . '/payment_return.php?tx_ref=' . urlencode($txRef);
+	$init = $chapa->initialize([
+		'amount' => number_format($amount, 2, '.', ''),
+		'currency' => 'ETB',
+		'email' => $email ?: 'customer@example.com',
+		'first_name' => $ship['name'],
+		'last_name' => 'Customer',
+		'tx_ref' => $txRef,
+		'callback_url' => $callback,
+		'return_url' => $returnUrl,
+		'customization' => [
+			'title' => 'EthioBookstore',
+			'description' => 'Order #' . $orderId,
+		],
+	]);
+
+	if ($init['ok'] && !empty($init['checkout_url'])) {
+		header('Location: ' . $init['checkout_url']);
 		exit;
 	}
+	app_log('error', 'chapa_init_failed', $init);
+	flash_set('error', $init['error'] ?? 'Payment init failed. Order saved as pending.');
+	redirect_local('payment_return.php?tx_ref=' . urlencode($txRef));
 }
 
-session_unset();
-?>
-<p class="lead text-success">Your order has been processed sucessfully. Please check your email to get your order confirmation and shipping detail!.
-	Your cart has been empty.</p>
-
-<?php
-if (isset($conn)) {
-	mysqli_close($conn);
+// Dev fallback when Chapa is not configured: mark paid immediately
+if (config('app.debug')) {
+	markOrderPaid($conn, $orderId);
+	if ($email) {
+		send_order_confirmation((string) $email, $orderId, $amount);
+	}
+	flash_set('success', t('order_paid') . ' (debug mode, Chapa not configured)');
+	redirect_local('payment_return.php?tx_ref=' . urlencode($txRef));
 }
-require_once "./template/footer.php";
-?>
+
+flash_set('success', t('order_success'));
+redirect_local('payment_return.php?tx_ref=' . urlencode($txRef));
